@@ -518,6 +518,22 @@ export async function main() {
   }
 
   const config = await loadConfig();
+
+  // Hydrate the model (and provider) from the last live session state, so a
+  // plain restart — no --model, no --resume — picks up wherever the user
+  // last left off instead of silently reverting to the config file's
+  // default every time. This only sets a fallback: an explicit --model/
+  // --provider flag or an explicit --resume target (handled below via
+  // resolveStartupSelection) still takes precedence over it.
+  try {
+    const lastState = await loadSessionState();
+    if (lastState?.model) config.model = lastState.model;
+    if (lastState?.provider) config.provider = lastState.provider as ProviderName;
+  } catch {
+    // Missing/corrupt session-state file — fall back to the config file's
+    // own default model/provider, same as before this hydration existed.
+  }
+
   const keybindings = await loadKeybindings();
 
   let cliProvider: ProviderName | undefined;

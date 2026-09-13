@@ -221,7 +221,22 @@ export function useAgent(
   const subagentToolRef = useRef<{ cancelSubagent: (id: string) => void } | null>(null);
   const confirmationQueueRef = useRef(new ConfirmationQueue());
   const conversationRef = useRef(new ConversationState());
-  conversationRef.current.setModel(config.model);
+  // Tracks the model actually in effect for this conversation, distinct from
+  // config.model — the CLI/resume can change config.model externally, and the
+  // conversation should adopt that, but the submit loop and persistence must
+  // read from here rather than raw config.model so an in-session model switch
+  // isn't clobbered back on every render.
+  const lastModelRef = useRef<string>(config.model);
+  conversationRef.current.setModel(lastModelRef.current);
+
+  // Adopt an externally-changed config.model (CLI flag / resumed session),
+  // but only when it actually differs — this must not fire on every render.
+  useEffect(() => {
+    if (config.model && config.model !== lastModelRef.current) {
+      lastModelRef.current = config.model;
+      conversationRef.current.setModel(config.model);
+    }
+  }, [config.model]);
 
   const refreshDisplay = useCallback(() => {
     // Erase the screen through Ink rather than writing RIS ourselves.
@@ -780,11 +795,18 @@ export function useAgent(
             );
           }
 
+          // lastModelRef is kept in sync with conversationRef.current's model on
+          // every setModel() call above (ConversationState.model is private, so
+          // this ref is the only way to read it back). Using it here — rather
+          // than raw config.model — is what makes the streamed/saved model
+          // match whatever the conversation is actually running.
+          const currentModel = lastModelRef.current;
+
           const loop = runAgentLoop({
             provider,
             conversation: conversationRef.current,
             toolRegistry: toolRegistryRef.current,
-            model: config.model,
+            model: currentModel,
             systemPrompt: effectiveSystemPrompt,
             effort: config.effort,
             maxTokens: config.maxTokens,
@@ -939,7 +961,7 @@ export function useAgent(
                 setTokenUsage((currentUsage) => {
                   saveSession(
                     conversationRef.current.getMessages(),
-                    config.model,
+                    currentModel,
                     config.provider,
                     sessionIdRef.current ?? undefined,
                     currentUsage,
@@ -956,7 +978,7 @@ export function useAgent(
                 });
                 saveSessionState(
                   conversationRef.current.getMessages(),
-                  config.model,
+                  currentModel,
                   config.provider,
                   false,
                 ).catch(() => {});
